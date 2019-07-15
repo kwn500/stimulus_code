@@ -1,19 +1,20 @@
 %% ACHROMATIC ATTENTION EXPERIMENT
 
-% fMRI experiment.
+% fMRI/MEG experiment.
 % Displays blocks of trials in which RFP stimuli change in visual features
 % at a specified probability. Participants are cued to the visual feature
-% of attention.
+% of attention. Sends both block and event MEG parallel port triggers.
 
 % Records keypresses and output response and timing data to a .csv file.
+% writes timing data to mrvista parfile.
 
-% KWN 4/7/19
+% KWN (re-do) 15/7/19
 
 %%
 close all;
 clear;
 KbName('UnifyKeyNames');
-addpath('/home/k/kwn500/Desktop/ppdev-mex-master');
+addpath('/home/k/kwn500/Desktop/MEG_experiment/ppdev-mex-master');
 
 %% Collect participant information
 response = inputdlg({'Enter Participant Number:', 'Enter Scan Number:'},...
@@ -74,7 +75,7 @@ setup.othresh = 0.1;
 setup.cthresh = 0.1;
 setup.sthresh = 0.05;
 
-setup.output_dir = ('\Users\Ryan Maloney\Documents\Kirstie\attn_experiment\');
+setup.output_dir = ('/home/k/kwn500/Desktop/MEG_experiment/');
 
 ppdev_mex('Open', 1);
 ppdev_mex('Write', 1, 0);
@@ -149,6 +150,8 @@ stim.ref_rfp_tex = Screen('MakeTexture', window, stim.ref_rfp);
 
 total_trials = 1; % keep track of all trials.
 
+DrawFormattedText(window,'X','center','center', black);
+
 for thisBlock = 1:length(setup.block_order)
     for thisTrial = 1:setup.trials
         
@@ -162,8 +165,26 @@ for thisBlock = 1:length(setup.block_order)
         
         % if this is the first trial of the block, display the attention cue.
         if thisTrial == 1
+            % also check if this is the first trial of the entire run, if
+            % so, display the entire 9 second inter-block period (7.5
+            % seconds of black fixation cross, and 1.5 second attention
+            % cue).
+            if total_trials == 1
+                t0 = GetSecs; Screen('Flip', window);
+                timing.exp_start = t0;
+                
+                time_diff = timing.exp_start - t0;
+                
+                waitTime = setup.baseline_time - time_diff;
+                endTime = waitTime +timing.exp_start;
+                
+                while GetSecs < endTime
+                    DrawFormattedText(window,setup.block_labels{setup.block_order(1)},...
+                        'center', 'center', white');
+                end
+            end
+            
             t0 = GetSecs; Screen('Flip', window);
-            timing.exp_start = t0;
             timing.cue(total_trials) = GetSecs();
             
             time_diff = timing.cue(total_trials) - t0;
@@ -186,6 +207,7 @@ for thisBlock = 1:length(setup.block_order)
                 'center', 'center', white);
         end
         
+        
         test.trial_start = GetSecs;
         
         %%-----REFERENCE RFP
@@ -194,10 +216,10 @@ for thisBlock = 1:length(setup.block_order)
         % ISI fixation.
         t0 = GetSecs; Screen('Flip', window);
         timing.reference(total_trials) = GetSecs();
-         
-        % turn off block trigger after single screen flip. 
+        
+        % turn off block trigger after single screen flip.
         ppdev_mex('Write', 1, 0);
-       
+        
         time_diff = timing.reference(total_trials) - t0;
         
         waitTime = setup.stim_time - time_diff;
@@ -270,8 +292,9 @@ for thisBlock = 1:length(setup.block_order)
         ppdev_mex('Write', 1, 0);
         
         timing.response(total_trials) = GetSecs;
+        time_diff = timing.response(total_trials) - t0;
         
-        endTime = timing.reference(total_trials) + setup.trial_time + 0.02;
+        endTime = (timing.reference(total_trials) + setup.trial_time) - time_diff/2;
         
         % specify some defaults in the case of no response.
         timing.RT(total_trials) = NaN;
@@ -374,16 +397,20 @@ for thisBlock = 1:length(setup.block_order)
             end
         end
         
+        % increment total trial counter.
         total_trials = total_trials + 1;
     end
 end
 
 Screen('CloseAll')
-ppdev_mex('Close', 1);
+ppdev_mex('Close', 1); % close the parallel port trigger system.
 KbQueueRelease;
 ShowCursor;
 
 %% Format timing data
+
+% here, we calculate the relative timings of each event and the duration
+% of each stimulus presentation.
 edit_timing.baseline = timing.baseline;
 edit_timing.baseline(edit_timing.baseline == 0) = [];
 edit_timing.baseline = edit_timing.baseline-timing.exp_start;
@@ -406,6 +433,9 @@ edit_timing.reference_temp(1) = []; edit_timing.reference_temp(end+1) = (timing.
 edit_timing.response_duration = edit_timing.reference_temp-edit_timing.response;
 
 %% Output data
+
+% format both the response and timing data in a table with relevant column
+% headings and write to .csv file.
 timing_output.headers = {'Trial', 'Condition', 'Orientation', 'Contrast', 'Shape',...
     'Number_Of_Changes', 'RT', 'Keypress', 'Response', 'Reference_Onset', 'Reference_Duration', 'ISI_Onset', 'ISI_Duration',...
     'Target_Onset', 'Target_Duration', 'Response_Onset', 'Response_Duration'};
@@ -419,4 +449,35 @@ timing_output.data = table((1:total_trials-1)', info.block', info.orientation', 
 
 writetable(timing_output.data, strcat(setup.output_dir, sprintf('pp_%s_scan_%s_%s.csv', response{1}, response{2}, datestr(now, 'mm-dd-yyyy_HH-MM'))));
 
-%% 
+%% Write mrVista attention block parfiles
+
+% initialise storage variables.
+TRs = 0;
+count = 1;
+
+% create mr-vista parfile, containing length of each attention block (15s)
+% and interblock periods with associated event codes and write to .par
+% files.
+% 1- orientation, 2-contrast, 3-shape, 4-passive, 5-interblock.
+for thisBlock = 1:length(setup.block_order);
+    events(count) = 5;
+    if thisBlock == 1;
+        TRs(count) = 0;
+        TRs(count+1) = TRs(count)+9;
+    else
+        TRs(count) = TRs(count-1) + 15;
+        TRs(count+1) = TRs(count)+9;
+    end
+    events(count+1) = setup.block_order(thisBlock);
+    count = count + 2;
+    
+    if thisBlock == length(setup.block_order);
+        events(count) = 5;
+        TRs(count) = TRs(count-1) + 15;
+    end
+end
+
+parfile = [TRs; events];
+dlmwrite(sprintf('pp_%s_run_%s_attention_blocks.par', response{1}, response{2}), parfile', 'delimiter', '\t');
+
+%%
