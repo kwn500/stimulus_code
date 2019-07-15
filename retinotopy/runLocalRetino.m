@@ -1,5 +1,7 @@
 function runLocalRetino(setupname,site, WaitMRITrigger)
 
+cd('C:\Users\Ryan Maloney\Documents\Kirstie\retinotopy')
+
 setupname = [setupname '.mat'];
 
 if ~exist(setupname, 'file')
@@ -14,7 +16,6 @@ params = setRetinotopyParams(dat.params.experiment, dat.params);
 
 % set response device
 params = setRetinotopyDevices(params);
-
 % keyboard
 % go
 doRetinotopyScan_Kirstie(params, site, WaitMRITrigger);
